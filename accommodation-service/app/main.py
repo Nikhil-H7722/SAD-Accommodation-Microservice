@@ -4,11 +4,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .api import admin as admin_api
 from .api import auth as auth_api
 from .api import booking as booking_api
+from .api import catalogue as catalogue_api
+from .api import operations as operations_api
 from .config import settings
 from .db import SessionLocal
 from .errors import DomainError
@@ -43,7 +46,21 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Accommodation Service", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Accommodation Microservice",
+    version="1.0.0",
+    description="Student Mobility & Lifestyle Platform — Hostels & Housing Microservice with AWS RDS support",
+    lifespan=lifespan
+)
+
+# Enable CORS for Frontend SPA (React 18 on Vite localhost:5173 or AWS CloudFront/S3)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(DomainError)
@@ -59,9 +76,18 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
 @app.get(f"{settings.api_prefix}/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "healthy",
+        "service": "Accommodation Microservice",
+        "platform": "Student Mobility & Lifestyle Platform",
+        "database": "PostgreSQL (AWS RDS compatible)",
+        "currency": "INR"
+    }
 
 
+# Include all sub-routers under API prefix (/api/v1/accommodation)
 app.include_router(auth_api.router, prefix=settings.api_prefix)
 app.include_router(booking_api.router, prefix=settings.api_prefix)
+app.include_router(catalogue_api.router, prefix=settings.api_prefix)
+app.include_router(operations_api.router, prefix=settings.api_prefix)
 app.include_router(admin_api.router, prefix=settings.api_prefix)

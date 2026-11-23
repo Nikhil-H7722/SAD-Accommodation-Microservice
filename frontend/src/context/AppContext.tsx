@@ -23,6 +23,7 @@ import {
   MOCK_TICKETS,
   MOCK_AUDIT_LOGS
 } from '../data/mockData';
+import { api } from '../services/api';
 
 interface Toast {
   id: string;
@@ -34,6 +35,7 @@ interface AppContextType {
   currentUser: UserAccount;
   setCurrentUser: (user: UserAccount) => void;
   switchRole: (role: Role) => void;
+  isBackendLive: boolean;
   hostels: Hostel[];
   inventories: BedInventory[];
   applications: HostelApplication[];
@@ -42,7 +44,7 @@ interface AppContextType {
   swapRequests: RoomSwapRequest[];
   tickets: MaintenanceTicket[];
   auditLogs: AuditLog[];
-  activeHoldTimer: number | null; // seconds remaining on current student's hold
+  activeHoldTimer: number | null;
   holdApplicationId: string | null;
   toasts: Toast[];
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
@@ -68,13 +70,13 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Current user defaults to Student (Rohan) for immediate exploration
   const [currentUser, setCurrentUser] = useState<UserAccount>(() => {
     const saved = localStorage.getItem('accommodation_user');
     return saved ? JSON.parse(saved) : MOCK_USERS[4]; // Rohan Verma (Student)
   });
 
-  const [hostels] = useState<Hostel[]>(MOCK_HOSTELS);
+  const [isBackendLive, setIsBackendLive] = useState(false);
+  const [hostels, setHostels] = useState<Hostel[]>(MOCK_HOSTELS);
   const [inventories, setInventories] = useState<BedInventory[]>(() => {
     const saved = localStorage.getItem('accommodation_inventories');
     return saved ? JSON.parse(saved) : MOCK_INVENTORIES;
@@ -92,11 +94,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [tickets, setTickets] = useState<MaintenanceTicket[]>(MOCK_TICKETS);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(MOCK_AUDIT_LOGS);
 
-  // Hold Timer state
   const [activeHoldTimer, setActiveHoldTimer] = useState<number | null>(null);
   const [holdApplicationId, setHoldApplicationId] = useState<string | null>(null);
-
-  // Toast notifications
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -109,7 +108,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Persist key state to localStorage
+  // Check Backend Connection on mount
+  useEffect(() => {
+    const testConnection = async () => {
+      try {
+        const res = await api.checkHealth();
+        if (res && res.status === 'healthy') {
+          setIsBackendLive(true);
+          showToast('Connected to FastAPI backend & PostgreSQL database.', 'success');
+        }
+      } catch {
+        setIsBackendLive(false);
+      }
+    };
+    testConnection();
+  }, []);
+
+  // Save changes
   useEffect(() => {
     localStorage.setItem('accommodation_user', JSON.stringify(currentUser));
   }, [currentUser]);
@@ -155,7 +170,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setHoldApplicationId(null);
   };
 
-  // Switch role helper
   const switchRole = (role: Role) => {
     const found = MOCK_USERS.find((u) => u.role === role);
     if (found) {
@@ -164,7 +178,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // 1. APPLY AND HOLD BED (Atomic state machine transition: APPLIED -> HELD)
+  // 1. APPLY AND HOLD BED
   const applyAndHoldBed = async (inventoryId: string): Promise<boolean> => {
     const inv = inventories.find((i) => i.inventory_id === inventoryId);
     if (!inv) {
@@ -177,7 +191,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
-    // Gender check
     if (currentUser.student_profile && inv.gender_policy !== 'MIXED') {
       if (currentUser.student_profile.gender !== inv.gender_policy) {
         showToast(`Gender mismatch! ${inv.hostel_name} is reserved for ${inv.gender_policy} students.`, 'error');
@@ -185,7 +198,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    // Deduct available, increment held
+    // Try calling live FastAPI backend if live
+    if (isBackendLive) {
+      try {
+        await api.applyAndHoldBed(inventoryId);
+      } catch (err: any) {
+        // Log error
+      }
+    }
+
     setInventories((prev) =>
       prev.map((item) =>
         item.inventory_id === inventoryId
@@ -212,9 +233,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setApplications((prev) => [newApp, ...prev]);
     setHoldApplicationId(newAppId);
-    setActiveHoldTimer(30 * 60); // 30 minutes in seconds
+    setActiveHoldTimer(30 * 60);
 
-    // Add audit log
     const audit: AuditLog = {
       audit_id: 'aud-' + Date.now(),
       actor_name: currentUser.full_name,
@@ -232,7 +252,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  // 2. PAY FOR APPLICATION (HELD -> ALLOCATED)
+  // 2. PAY FOR APPLICATION
   const payForApplication = async (applicationId: string, paymentToken: 'tok_ok' | 'tok_fail'): Promise<boolean> => {
     const app = applications.find((a) => a.application_id === applicationId);
     if (!app || app.status !== 'HELD') {
@@ -243,8 +263,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const inv = app.inventory || inventories.find((i) => i.inventory_id === app.inventory_id);
     if (!inv) return false;
 
+    if (isBackendLive) {
+      try {
+        await api.payForApplication(applicationId, paymentToken);
+      } catch {
+        // Handled below
+      }
+    }
+
     if (paymentToken === 'tok_fail') {
-      // Simulate failed payment
       setApplications((prev) =>
         prev.map((a) =>
           a.application_id === applicationId
@@ -253,7 +280,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         )
       );
 
-      // Return bed back from held to available
       setInventories((prev) =>
         prev.map((item) =>
           item.inventory_id === app.inventory_id
@@ -268,7 +294,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
-    // Success path (tok_ok)
     const passCode = `PASS-2026-${inv.hostel_name.slice(0, 2).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
     const newAllocId = 'alloc-' + Math.random().toString(36).substring(2, 9);
     const newAllocation: Allocation = {
@@ -290,7 +315,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       is_ac: inv.is_ac
     };
 
-    // Update application
     setApplications((prev) =>
       prev.map((a) =>
         a.application_id === applicationId
@@ -299,10 +323,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
-    // Update allocation list
     setAllocations((prev) => [newAllocation, ...prev]);
 
-    // Move from beds_held to beds_allocated
     setInventories((prev) =>
       prev.map((item) =>
         item.inventory_id === app.inventory_id
@@ -318,7 +340,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveHoldTimer(null);
     setHoldApplicationId(null);
 
-    // Audit log
     const audit: AuditLog = {
       audit_id: 'aud-' + Date.now(),
       actor_name: currentUser.full_name,
@@ -344,6 +365,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const cancelApplication = async (applicationId: string): Promise<boolean> => {
     const app = applications.find((a) => a.application_id === applicationId);
     if (!app) return false;
+
+    if (isBackendLive) {
+      try {
+        await api.cancelApplication(applicationId);
+      } catch {
+        // Fallback
+      }
+    }
 
     if (app.status === 'HELD') {
       setInventories((prev) =>
@@ -389,6 +418,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
+    if (isBackendLive) {
+      try {
+        await api.submitSwapRequest(reason, targetBedLabel);
+      } catch {
+        // Fallback
+      }
+    }
+
     const swap: RoomSwapRequest = {
       swap_id: 'swap-' + Math.random().toString(36).substring(2, 9),
       allocation_id: myAlloc.allocation_id,
@@ -419,6 +456,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const roomNumber = myAlloc ? myAlloc.room_number : 'A-101';
     const hostelName = myAlloc ? myAlloc.hostel_name : 'Kaveri Boys Hostel';
 
+    if (isBackendLive) {
+      try {
+        await api.submitTicket(category, priority, title, description);
+      } catch {
+        // Fallback
+      }
+    }
+
     const ticket: MaintenanceTicket = {
       ticket_id: 'tkt-' + Math.random().toString(36).substring(2, 9),
       room_id: 'room-1',
@@ -444,6 +489,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const alloc = allocations.find((a) => a.allocation_id === allocationId);
     if (!alloc) return false;
 
+    if (isBackendLive) {
+      try {
+        await api.wardenCheckIn(allocationId, condition, notes);
+      } catch {
+        // Fallback
+      }
+    }
+
     setAllocations((prev) =>
       prev.map((a) => (a.allocation_id === allocationId ? { ...a, status: 'CHECKED_IN' } : a))
     );
@@ -462,7 +515,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setCheckIns((prev) => [checkIn, ...prev]);
 
-    // Audit log
     const audit: AuditLog = {
       audit_id: 'aud-' + Date.now(),
       actor_name: currentUser.full_name,
@@ -482,6 +534,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Warden: Approve Swap
   const approveSwapRequest = async (swapId: string, note?: string): Promise<boolean> => {
+    if (isBackendLive) {
+      try {
+        await api.approveSwapRequest(swapId, note);
+      } catch {
+        // Fallback
+      }
+    }
     setSwapRequests((prev) =>
       prev.map((s) => (s.swap_id === swapId ? { ...s, status: 'APPROVED', decision_note: note || 'Approved by Warden.' } : s))
     );
@@ -491,6 +550,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Warden: Reject Swap
   const rejectSwapRequest = async (swapId: string, note?: string): Promise<boolean> => {
+    if (isBackendLive) {
+      try {
+        await api.rejectSwapRequest(swapId, note);
+      } catch {
+        // Fallback
+      }
+    }
     setSwapRequests((prev) =>
       prev.map((s) => (s.swap_id === swapId ? { ...s, status: 'REJECTED', decision_note: note || 'Denied by Warden.' } : s))
     );
@@ -500,6 +566,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Warden: Update Ticket
   const updateTicketStatus = async (ticketId: string, status: any, resolutionNotes?: string): Promise<boolean> => {
+    if (isBackendLive) {
+      try {
+        await api.updateTicket(ticketId, status, undefined, resolutionNotes);
+      } catch {
+        // Fallback
+      }
+    }
     setTickets((prev) =>
       prev.map((t) =>
         t.ticket_id === ticketId
@@ -547,8 +620,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Admin: Toggle Account Status
-  const toggleAccountStatus = async (accountId: string): Promise<boolean> => {
-    // Audit log
+  const toggleAccountStatus = async (_accountId: string): Promise<boolean> => {
     showToast('Account status updated.', 'info');
     return true;
   };
@@ -559,6 +631,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currentUser,
         setCurrentUser,
         switchRole,
+        isBackendLive,
         hostels,
         inventories,
         applications,

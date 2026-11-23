@@ -1,15 +1,15 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { Role } from '../types';
 import {
   Building2,
   ShieldCheck,
   UserCheck,
   Clock,
   Radio,
-  LogOut,
   User,
-  GraduationCap
+  GraduationCap,
+  CheckCircle,
+  AlertCircle
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -17,7 +17,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onOpenAuth }) => {
-  const { currentUser, switchRole, activeHoldTimer } = useApp();
+  const { currentUser, switchRole, activeHoldTimer, isBackendLive } = useApp();
 
   const formatTimer = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -36,13 +36,23 @@ export const Header: React.FC<HeaderProps> = ({ onOpenAuth }) => {
           <span className="font-semibold text-white">Microservice 2: Hostels and Housing</span>
         </div>
         <div className="flex items-center space-x-3 text-xs">
-          <span className="flex items-center space-x-1">
-            <Radio className="w-3.5 h-3.5 text-emerald-400" />
-            <span>FastAPI REST & WS (/api/v1/accommodation)</span>
-          </span>
+          {/* Live Backend Connection Indicator */}
+          <div className="flex items-center space-x-1.5 bg-slate-950/40 px-2 py-0.5 rounded-md border border-emerald-500/30">
+            {isBackendLive ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="text-emerald-300 font-semibold text-[11px]">FastAPI Live</span>
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                <span className="text-amber-300 text-[11px]">Ready (Vite Proxy: /api)</span>
+              </>
+            )}
+          </div>
           <span className="text-emerald-300">|</span>
           <span className="bg-emerald-950/60 px-2 py-0.5 rounded text-[11px] font-mono text-emerald-300">
-            PostgreSQL: campus_mobility_accommodation
+            PostgreSQL • AWS RDS Ready
           </span>
         </div>
       </div>
