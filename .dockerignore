@@ -1,0 +1,13 @@
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/node_modules
+**/dist
+**/.env
+**/*.zip
+**/docs/*.docx
+.git
+.gitignore
+*.md
+frontend/dist
+accommodation-service/alembic/versions
