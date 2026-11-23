@@ -11,7 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - accommodation_pgdata:/var/lib/postgresql/data
-      - ./sql/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+      - ../database/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U accommodation -d campus_mobility_accommodation"]
       interval: 5s

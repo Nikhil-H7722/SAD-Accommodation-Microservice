@@ -1,7 +1,11 @@
 """Run a .sql script statement by statement (used by Alembic and the tests)."""
 from pathlib import Path
 
-SCHEMA_FILE = Path(__file__).resolve().parent.parent / "sql" / "schema.sql"
+SCHEMA_FILE = (
+    Path(__file__).resolve().parent.parent / "sql" / "schema.sql"
+    if (Path(__file__).resolve().parent.parent / "sql" / "schema.sql").exists()
+    else Path(__file__).resolve().parent.parent.parent / "database" / "schema.sql"
+)
 
 
 def split_statements(sql: str) -> list[str]:
